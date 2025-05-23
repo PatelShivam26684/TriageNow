@@ -17,6 +17,18 @@ Prerequisites
 - API key for [Perplexity Sonar](https://www.perplexity.ai)
 
 ---
+Create a folder for the app and cd into the folder:
+```bash
+cd folder
+git clone https://github.com/PatelShivam26684/TriageNow.git
+```
+
+cd into TriageNow:
+```bash
+cd TriageNow
+```
+
+
 
 Backend Setup (`/backend`)
 
@@ -24,10 +36,10 @@ Backend Setup (`/backend`)
 
 ```bash
 cd backend
-python3 -m venv venv
 ```
 2. (Optional but recommended) Create and activate a virtual environment:
 ```bash
+python3 -m venv venv
 source venv/bin/activate      # macOS/Linux
 # venv\Scripts\activate       # Windows
 ```
