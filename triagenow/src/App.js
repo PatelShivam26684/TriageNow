@@ -12,34 +12,44 @@ import { useAuth } from './AuthContext';
 
 function App() {
     const { user, logout } = useAuth();
+    const roleToDashboardPath = {
+    patient: '/dashboard',
+    care_team: '/care-dashboard',
+    admin: '/admin-dashboard'
+  };
   return (
-    <Router>
-      <nav className="p-4 bg-gray-100 flex justify-center space-x-4">
-        <Link to="/">Triage</Link>
-        <Link to="/register">Register</Link>
-        <Link to="/login">Login</Link>
-          {user && (
-            <button
-                onClick={() => {
-                    logout();
-                    window.location.href = '/login';  // or use `useNavigate()` if you prefer
-                }}
-                className="bg-red-600 text-white px-3 py-1 rounded hover:bg-red-700"
-            >
-                Logout
-            </button>
-          )}
-      </nav>
+      <Router>
+          <nav className="p-4 bg-gray-100 flex justify-center space-x-4">
+              {user ? (
+                  <>
+                      <Link to={roleToDashboardPath[user.role]} className="text-blue-600 underline">Dashboard</Link>
+                      <button
+                          onClick={() => {
+                              logout();
+                              window.location.href = '/login';
+                          }}
+                          className="bg-red-600 text-white px-3 py-1 rounded hover:bg-red-700"
+                      >
+                          Logout
+                      </button>
+                  </>
+              ) : (
+                  <>
+                      <Link to="/login">Login</Link>
+                      <Link to="/register">Register</Link>
+                  </>
+              )}
+          </nav>
 
-      <Routes>
-        <Route path="/register" element={<Register />} />
-        <Route path="/login" element={<Login />} />
-        <Route path="/" element={<ProtectedRoute> <TriageForm /> </ProtectedRoute>}/>
-          <Route path="/dashboard" element={<ProtectedRoute><PatientDashboard /></ProtectedRoute>} />
-        <Route path="/care-dashboard" element={<ProtectedRoute><CareTeamDashboard /></ProtectedRoute>} />
-        <Route path="/admin-dashboard" element={<ProtectedRoute><AdminDashboard /></ProtectedRoute>} />
-      </Routes>
-    </Router>
+          <Routes>
+              <Route path="/register" element={<Register/>}/>
+              <Route path="/login" element={<Login/>}/>
+              <Route path="/" element={<ProtectedRoute><PatientDashboard/></ProtectedRoute>} />
+              <Route path="/dashboard" element={<ProtectedRoute><PatientDashboard/></ProtectedRoute>}/>
+              <Route path="/care-dashboard" element={<ProtectedRoute><CareTeamDashboard/></ProtectedRoute>}/>
+              <Route path="/admin-dashboard" element={<ProtectedRoute><AdminDashboard/></ProtectedRoute>}/>
+          </Routes>
+      </Router>
   );
 }
 

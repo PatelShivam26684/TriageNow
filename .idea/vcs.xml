@@ -3,5 +3,6 @@
   <component name="VcsDirectoryMappings">
     <mapping directory="$PROJECT_DIR$" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/triagenow" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/triagenow-backup" vcs="Git" />
   </component>
 </project>
