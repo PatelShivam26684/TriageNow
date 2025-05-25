@@ -5,6 +5,7 @@ from flask_bcrypt import Bcrypt
 db = SQLAlchemy()
 bcrypt = Bcrypt()
 
+VALID_ROLES = ['patient', 'care_team', 'admin']
 # User model
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)

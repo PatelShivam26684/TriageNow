@@ -7,6 +7,7 @@ import re
 from markdown import markdown
 load_dotenv()
 from models import db, bcrypt, User
+from flask import abort
 
 
 
@@ -31,6 +32,13 @@ bcrypt.init_app(app)
 
 with app.app_context():
     db.create_all()
+    if not User.query.filter_by(username='rootadmin').first():
+            root = User(name='Root Admin', username='rootadmin', role='admin')
+            root.set_password('admin123')
+            db.session.add(root)
+            db.session.commit()
+            print("✅ Root admin created with username='rootadmin' and password='admin123'")
+
 CORS(app)
 
 SONAR_API_KEY = os.getenv("SONAR_API_KEY")
@@ -92,7 +100,7 @@ def register():
     name = data.get('name')
     username = data.get('username')
     password = data.get('password')
-    role = data.get('role', 'patient')
+    role = 'patient'
 
     if not all([name, username, password]):
         return jsonify({'error': 'Missing name, username, or password'}), 400
@@ -132,6 +140,50 @@ def login():
             'role': user.role
         }
     }), 200
+
+@app.route('/users', methods=['GET'])
+def get_users():
+    auth_username = request.args.get('admin')  # rootadmin verification
+    admin_user = User.query.filter_by(username=auth_username).first()
+
+    if not admin_user or admin_user.role != 'admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    users = User.query.all()
+    user_list = [
+        {
+            'id': u.id,
+            'name': u.name,
+            'username': u.username,
+            'role': u.role
+        } for u in users
+    ]
+    return jsonify({'users': user_list}), 200
+
+
+@app.route('/update-role', methods=['POST'])
+def update_user_role():
+    data = request.get_json()
+    admin_username = data.get('admin')
+    target_username = data.get('username')
+    new_role = data.get('role')
+
+    admin_user = User.query.filter_by(username=admin_username).first()
+    target_user = User.query.filter_by(username=target_username).first()
+
+    if not admin_user or admin_user.role != 'admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    if not target_user:
+        return jsonify({'error': 'User not found'}), 404
+
+    # Only rootadmin can change admin roles
+    if target_user.role == 'admin' and admin_user.username != 'rootadmin':
+        return jsonify({'error': 'Only rootadmin can change other admin roles'}), 403
+
+    target_user.role = new_role
+    db.session.commit()
+    return jsonify({'message': f"{target_username}'s role updated to {new_role}"}), 200
 
 if __name__ == '__main__':
     print("Registered routes:")
