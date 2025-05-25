@@ -90,17 +90,17 @@ def register():
     print("✅ /register endpoint was hit!")
     data = request.get_json()
     name = data.get('name')
-    email = data.get('email')
+    username = data.get('username')
     password = data.get('password')
     role = data.get('role', 'patient')
 
-    if not all([name, email, password]):
-        return jsonify({'error': 'Missing name, email, or password'}), 400
+    if not all([name, username, password]):
+        return jsonify({'error': 'Missing name, username, or password'}), 400
 
-    if User.query.filter_by(email=email).first():
-        return jsonify({'error': 'Email already registered'}), 409
+    if User.query.filter_by(username=username).first():
+        return jsonify({'error': 'Username already taken'}), 409
 
-    user = User(name=name, email=email, role=role)
+    user = User(name=name, username=username, role=role)
     user.set_password(password)
 
     db.session.add(user)
@@ -112,13 +112,13 @@ def register():
 @app.route('/login', methods=['POST'])
 def login():
     data = request.get_json()
-    email = data.get('email')
+    username = data.get('username')
     password = data.get('password')
 
-    if not email or not password:
-        return jsonify({'error': 'Email and password are required'}), 400
+    if not username or not password:
+        return jsonify({'error': 'Username and password are required'}), 400
 
-    user = User.query.filter_by(email=email).first()
+    user = User.query.filter_by(username=username).first()
 
     if not user or not user.check_password(password):
         return jsonify({'error': 'Invalid credentials'}), 401
@@ -128,7 +128,7 @@ def login():
         'user': {
             'id': user.id,
             'name': user.name,
-            'email': user.email,
+            'username': user.username,
             'role': user.role
         }
     }), 200
