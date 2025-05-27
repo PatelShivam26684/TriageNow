@@ -8,16 +8,25 @@ from markdown import markdown
 load_dotenv()
 from models import db, bcrypt, User
 from flask import abort
-from models import Vitals,CareChatMessage
+import json5 as json
+from flask_cors import cross_origin
+from flask import url_for
+from models import Vitals, CareChatMessage, PatientProfile, PatientChatMessage
+
+
 
 
 
 def clean_response(raw_text):
+    # Remove <think> blocks
     clean_text = re.sub(r"<think>.*?</think>", "", raw_text, flags=re.DOTALL)
-    clean_text = re.sub(r"#.*", "", clean_text)
+    # Remove markdown code blocks
+    clean_text = re.sub(r"```json|```", "", clean_text)
+    # Remove other markdown formatting
     clean_text = re.sub(r"\*\*(.*?)\*\*", r"\1", clean_text)
     clean_text = re.sub(r"\*(.*?)\*", r"\1", clean_text)
-    clean_text = re.sub(r"\n{2,}", "\n\n", clean_text)
+    # Remove excessive newlines
+    clean_text = re.sub(r"\n{2,}", "\n", clean_text)
     return clean_text.strip()
 
 app = Flask(__name__)
@@ -30,11 +39,11 @@ bcrypt.init_app(app)
 with app.app_context():
     db.create_all()
     if not User.query.filter_by(username='rootadmin').first():
-            root = User(name='Root Admin', username='rootadmin', role='admin')
-            root.set_password('admin123')
-            db.session.add(root)
-            db.session.commit()
-            print("✅ Root admin created with username='rootadmin' and password='admin123'")
+        root = User(name='Root Admin', username='rootadmin', role='admin')
+        root.set_password('admin123')
+        db.session.add(root)
+        db.session.commit()
+        print("✅ Root admin created with username='rootadmin' and password='admin123'")
     test_user = User.query.filter_by(username='bob').first()
     if test_user and not test_user.vitals:
         demo_vitals = Vitals(user_id=test_user.id, bp="122/78", hr=70, weight=72.5, temp=98.6)
@@ -205,7 +214,7 @@ def sonar_chat():
         f"The patient has: {', '.join(patient.get('conditions', [])) or 'no known conditions'}.\n"
         f"They are prescribed: {', '.join(patient.get('medications', [])) or 'no medications'}.\n"
         f"Their latest vitals: blood pressure {patient.get('vitals', {}).get('bp', 'N/A')} and heart rate {patient.get('vitals', {}).get('hr', 'N/A')} bpm.\n\n"
-        f"When responding, speak directly *to* the patient in plain, human-friendly language. Use ‘you’ instead of ‘the patient’. Keep responses to 3–4 sentences. Include source citations at the end."
+        f"When responding, speak directly *to* the patient in plain, human-friendly language. Use 'you' instead of 'the patient'. Keep responses to 3–4 sentences. Include source citations at the end."
     )
 
     full_prompt = (
@@ -348,6 +357,7 @@ def save_care_chat_message():
     username = data.get('username')
     sender = data.get('sender')  # 'user', 'nurse', or 'bot'
     content = data.get('content')
+    meta = data.get('meta', None)
 
     if not all([username, sender, content]):
         return jsonify({'error': 'Missing required fields'}), 400
@@ -356,11 +366,17 @@ def save_care_chat_message():
     if not user:
         return jsonify({'error': 'User not found'}), 404
 
-    message = CareChatMessage(user_id=user.id, sender=sender, content=content)
+    message = CareChatMessage(
+        user_id=user.id,
+        sender=sender,
+        content=content,
+        meta=json.dumps(meta) if meta else None
+    )
+
     db.session.add(message)
     db.session.commit()
-
     return jsonify({'message': 'Message saved'}), 201
+
 
 
 @app.route('/care-chat/<username>', methods=['GET'])
@@ -379,6 +395,335 @@ def get_care_chat_messages(username):
     ]
     return jsonify({'messages': result}), 200
 
+
+@app.route('/patients', methods=['GET'])
+def get_patients():
+    patients = User.query.filter_by(role='patient').all()
+    return jsonify([
+        {'id': p.id, 'name': p.name, 'username': p.username}
+        for p in patients
+    ])
+
+
+@app.route('/parse-profile', methods=['POST'])
+def parse_profile():
+    import re
+
+    data = request.get_json()
+    input_text = data.get('input', '')
+    username = data.get('username', None)
+
+    if not input_text:
+        return jsonify({'error': 'Missing input text'}), 400
+
+    # Build the Sonar prompt
+    prompt = f"""
+You are a clinical AI assistant designed to extract structured patient data from free-text clinical summaries and updates. You must extract relevant information and validate it against condition-specific monitoring schemas.
+
+Use the following **master schema** derived from 2025 clinical guidelines (AHA, ADA, GINA, GOLD, etc.). For each use case, there are:
+- Core vital/biometric requirements (with LOINC references)
+- Mandatory patient-history elements
+- Recommended alert/trigger thresholds
+- Primary guideline source citations
+
+Do NOT fabricate data. If required fields are missing, respond as a friendly chat assistant and ASK THE USER (e.g., nurse) to provide the missing information.
+
+---
+
+# 🧾 MASTER PROFILE REQUIREMENTS
+
+1. **Chronic Disease Management (HF, DM, Asthma, COPD)**
+   - Core Vital/Biometric Inputs (sensor ➜ LOINC): 
+     • Weight ➜ 29463-7 
+     • HR/SBP/DBP ➜ 8867-4 / 8480-6 / 8462-4 
+     • SpO₂ ➜ 59408-5 
+     • Glucose ➜ 2339-0 
+   - Required History: 
+     • Age, sex 
+     • NYHA class 
+     • A1c & diabetes meds 
+     • Asthma severity / GOLD stage 
+   - Alert Thresholds: 
+     • SpO₂ < 88% (GOLD 2023) 
+     • Weight ↑ >2kg/3d (AHA 2022) 
+     • A1c > 9% (ADA 2025)
+   - Evidence: [1][2][3][4]
+
+2. **Post-Operative Recovery**
+   - Core Vitals:
+     • HR ➜ 8867-4 
+     • BP ➜ 8480-6 
+     • Temp ➜ 8310-5 
+   - Required History:
+     • Procedure type 
+     • VTE risk 
+     • Opioid regimen 
+   - Alert:
+     • Temp >38.5°C 
+     • SBP <90 mmHg 
+   - Evidence: [5]
+
+3. **Oncology Monitoring**
+   - Inputs:
+     • Temp ➜ 8310-5 
+     • Weight ➜ 29463-7 
+   - Required:
+     • ANC, cancer stage, ICI use 
+   - Alert:
+     • Temp ≥38°C + ANC <500 
+   - Evidence: [6]
+
+4. **Maternal-Fetal Monitoring**
+   - Inputs:
+     • BP ➜ 8480-6 
+     • FHR ➜ 56085-1 
+   - Required:
+     • Gestational age, pre-eclampsia risk 
+   - Alert:
+     • BP ≥140/90, FHR <110/>160 
+   - Evidence: [8]
+
+5. **Substance Use**
+   - Inputs:
+     • Transdermal EtOH, HR ➜ 8867-4 
+   - Required:
+     • AUDIT score, naltrexone use 
+   - Alert:
+     • TAC ≥0.02% 
+   - Evidence: [21]
+
+# 📚 Sources
+1. AHA 2022 HF - doi:10.1161/CIR.0000000000001063
+2. ADA 2025 - https://diabetesjournals.org/care/article/48/Supplement_1/S6
+3. GINA 2024 - https://ginasthma.org
+4. GOLD 2023 - https://goldcopd.org
+5. ERAS 2025 - https://erassociety.org
+6. ASCO 2024 - https://connectwithcare.org
+8. ACOG/AHRQ Maternal RPM 2025
+21. SOBRsafe EtOH Validation - https://ir.sobrsafe.com
+
+---
+
+## TASK
+
+Analyze the following input (which may contain both the original summary and follow-up updates).
+If there is any follow up updates, you should act like a chatbot considering the response you gave earlier and new responses from the careteam and respond accordingly:
+
+\"""{input_text}\"""
+
+1. Extract valid clinical information and incorporate new updates into the existing structure.
+2. Preserve previously valid data if still applicable.
+3. Re-evaluate *missing_fields* based on the full current information.
+4. Return the updated JSON structured profile.
+
+Output a single raw JSON object with:
+- demographics
+- vitals_biometrics (with LOINC)
+- functional_scores
+- medications
+- devices
+- behavioral_factors
+- infectious_history
+- missing_fields (list of dictionaries with parameter, question, guideline_ref)
+- alerts (trigger violations)
+
+Use null for unknown values. Do not fabricate. Only ask about *required* missing values.
+"""
+
+    try:
+        response = requests.post(
+            "https://api.perplexity.ai/chat/completions",
+            headers={
+                "Authorization": f"Bearer {SONAR_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "sonar-reasoning",
+                "messages": [{"role": "user", "content": prompt}]
+            }
+        )
+
+        raw_output = response.json()['choices'][0]['message']['content']
+        print("🧠 Raw AI Output:", raw_output)
+
+        cleaned = re.sub(r"<think>.*?</think>", "", raw_output, flags=re.DOTALL).strip()
+        cleaned = re.sub(r"^```json|```$", "", cleaned).strip()
+        json_match = re.search(r'\{[\s\S]*\}', cleaned)
+        if not json_match:
+            raise ValueError("No valid JSON object found in cleaned output.")
+
+        json_str = json_match.group()
+
+        # strip out JavaScript‐style comments
+        json_str = re.sub(r'//.*', '', json_str)
+        json_str = re.sub(r'/\*[\s\S]*?\*/', '', json_str)
+
+        parsed_json = json.loads(json_str)
+        return jsonify({'parsed': parsed_json}), 200
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e), 'raw_output': raw_output if 'raw_output' in locals() else 'N/A'}), 500
+
+
+
+@app.route('/save-profile', methods=['POST'])
+def save_profile():
+    data = request.get_json()
+    username = data.get('username')
+    profile_data = data.get('profile')
+    input_text = data.get('input')  # Get original clinical summary
+
+    user = User.query.filter_by(username=username).first()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+
+    existing = PatientProfile.query.filter_by(user_id=user.id).first()
+
+    if existing:
+        existing.data = profile_data
+        existing.original_input = input_text
+        existing.missing_fields_snapshot = profile_data.get('missing_fields', [])
+    else:
+        new_profile = PatientProfile(
+            user_id=user.id,
+            data=profile_data,
+            original_input=input_text,
+            missing_fields_snapshot=profile_data.get('missing_fields', [])
+        )
+        db.session.add(new_profile)
+
+    db.session.commit()
+    return jsonify({'message': 'Profile saved'}), 200
+
+
+
+@app.route('/profile/<username>', methods=['GET'])
+def get_saved_profile(username):
+    user = User.query.filter_by(username=username).first()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+
+    profile = PatientProfile.query.filter_by(user_id=user.id).first()
+    if not profile:
+        return jsonify({'message': 'No saved profile found'}), 200
+
+    return jsonify({'profile': profile.data}), 200
+
+
+from flask import url_for
+
+@app.route('/reprocess-profile', methods=['POST', 'OPTIONS'])
+@cross_origin()
+def reprocess_profile_with_updates():
+    data = request.get_json(force=True)
+    username = data.get('username')
+    updates = data.get('updates', {})
+
+    print("🚨 reprocess-profile called")
+    print("    payload:", data)
+
+    user = User.query.filter_by(username=username).first()
+    profile = PatientProfile.query.filter_by(user_id=user.id).first()
+    if not profile:
+        return jsonify({'error': 'Profile not found'}), 404
+
+    updated_input = (
+        f"{profile.original_input}\n\nUpdates:\n" +
+        "\n".join(f"{k}: {v}" for k,v in updates.items())
+    )
+
+    # build absolute URL to your own parse-profile route
+    parse_url = request.url_root.rstrip('/') + url_for('parse_profile')
+    print("    calling parse-profile at:", parse_url)
+    print("    with input:", updated_input)
+
+    # hit parse-profile
+    resp = requests.post(parse_url,
+                         json={'input': updated_input, 'username': username})
+    print("    parse-profile responded:", resp.status_code, resp.text)
+
+    if resp.status_code != 200:
+        return jsonify({
+            'error':           'Reprocessing failed',
+            'parse_status':    resp.status_code,
+            'parse_response':  resp.text
+        }), 500
+
+    new_profile = resp.json().get('parsed')
+    if not new_profile:
+        return jsonify({
+            'error':          'Reprocessing succeeded but no `parsed` key in response',
+            'raw_response':   resp.text
+        }), 500
+
+    profile.data = new_profile
+    profile.original_input = updated_input
+    db.session.commit()
+
+    return jsonify({
+        'profile':        new_profile,
+        'missing_fields': new_profile.get('missing_fields', [])
+    }), 200
+
+
+
+
+@app.route('/patient-chat', methods=['POST'])
+def save_patient_chat_message():
+    data = request.get_json()
+    username = data.get('username')
+    sender   = data.get('sender')   # 'user' or 'nurse'
+    content  = data.get('content')
+
+    if not all([username, sender, content]):
+        return jsonify({'error': 'Missing required fields'}), 400
+
+    user = User.query.filter_by(username=username).first()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+
+    msg = PatientChatMessage(
+        user_id=user.id,
+        sender=sender,
+        content=content
+    )
+    db.session.add(msg)
+    db.session.commit()
+    return jsonify({'message': 'Message saved'}), 201
+
+
+@app.route('/patient-chat/<username>', methods=['GET'])
+def get_patient_chat_messages(username):
+    user = User.query.filter_by(username=username).first()
+    if not user:
+        return jsonify({'error':'User not found'}), 404
+
+    msgs = (PatientChatMessage.query
+              .filter_by(user_id=user.id)
+              .order_by(PatientChatMessage.timestamp)
+              .all()
+           )
+    result = [
+      {
+        'sender':    m.sender,
+        'content':   m.content,
+        'timestamp': m.timestamp.isoformat()
+      } for m in msgs
+    ]
+    return jsonify({'messages': result}), 200
+
+@app.route('/patient-chat/<username>', methods=['DELETE'])
+def delete_patient_chat(username):
+    user = User.query.filter_by(username=username).first()
+    if not user:
+        return jsonify({'error':'User not found'}), 404
+
+    # delete all patient-chat messages for that user
+    PatientChatMessage.query.filter_by(user_id=user.id).delete()
+    db.session.commit()
+    return jsonify({'message':'Chat history cleared'}), 200
 
 
 if __name__ == '__main__':
