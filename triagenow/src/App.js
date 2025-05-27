@@ -8,6 +8,10 @@ import CareTeamDashboard from './CareTeamDashboard';
 import AdminDashboard from './AdminDashboard';
 import ProtectedRoute from './ProtectedRoute';
 import { useAuth } from './AuthContext';
+import ViewVitals from './ViewVitals';
+import ProfilePage from './ProfilePage';
+import BoredChat from './BoredChat';
+
 
 
 function App() {
@@ -48,6 +52,8 @@ function App() {
               <Route path="/dashboard" element={<ProtectedRoute><PatientDashboard/></ProtectedRoute>}/>
               <Route path="/care-dashboard" element={<ProtectedRoute><CareTeamDashboard/></ProtectedRoute>}/>
               <Route path="/admin-dashboard" element={<ProtectedRoute><AdminDashboard/></ProtectedRoute>}/>
+              <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
+              <Route path="/bored-chat" element={<ProtectedRoute><BoredChat /></ProtectedRoute>} />
           </Routes>
       </Router>
   );
