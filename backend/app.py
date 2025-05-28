@@ -865,8 +865,11 @@ Nurse’s question →
         return jsonify({'error': str(e)}), 500
 
 
+@app.route("/", methods=["GET"])
+def home():
+    return {"status": "Backend is running"}, 200
 
 if __name__ == '__main__':
     print("Registered routes:")
     print(app.url_map)
-    app.run(port=5000)
+    app.run(host = '0.0.0.0',debug = True)
