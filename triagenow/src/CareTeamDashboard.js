@@ -1,46 +1,83 @@
-import React, { useEffect, useState } from 'react';
-import CareTeamPatientView from './CareTeamPatientView';
+import React, { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { useAuth }     from './AuthContext'
+import NurseAssistantChat from './NurseAssistantChat'
 
-function CareTeamDashboard() {
-  const [patients, setPatients] = useState([]);
-  const [selectedPatient, setSelectedPatient] = useState(null);
+export default function CareTeamDashboard() {
+  const { user } = useAuth()
+  const [patients, setPatients]         = useState([])
+  const [usernameInput, setUsernameInput] = useState('')
+  const [triageUsername, setTriageUsername] = useState('')
+  const [profile, setProfile]           = useState(null)
 
+  const navigate = useNavigate()
+
+  // load your patient list
   useEffect(() => {
     fetch('http://127.0.0.1:5000/patients')
-      .then(res => res.json())
+      .then(r => r.json())
       .then(setPatients)
-      .catch(err => console.error("Failed to fetch patients:", err));
-  }, []);
+      .catch(console.error)
+  }, [])
+
+  // when nurse enters a username, fetch that patient’s saved profile
+  useEffect(() => {
+    if (!triageUsername) return
+    fetch(`http://127.0.0.1:5000/profile/${triageUsername}`)
+      .then(r => r.json())
+      .then(d => {
+        setProfile(d.profile || null)
+      })
+      .catch(console.error)
+  }, [triageUsername])
 
   return (
     <div className="p-6">
       <h2 className="text-2xl font-bold mb-4">👩‍⚕️ Care Team Dashboard</h2>
-      <div className="flex space-x-6">
-        <div className="w-1/3">
-          <h3 className="font-semibold mb-2">📋 Patients</h3>
-          <ul className="space-y-2">
-            {patients.map((p, i) => (
-              <li key={i}>
-                <button
-                  onClick={() => setSelectedPatient(p)}
-                  className={`w-full text-left px-3 py-2 rounded ${selectedPatient?.username === p.username ? 'bg-blue-100' : 'bg-gray-100 hover:bg-gray-200'}`}
-                >
-                  {p.name} ({p.username})
-                </button>
-              </li>
-            ))}
-          </ul>
+
+      {/* ── Nurse Triage Assistant ── */}
+      <div className="bg-white border rounded shadow p-4 mb-6">
+        <h3 className="font-semibold text-lg mb-2">🩺 Nurse Triage Assistant</h3>
+        <div className="flex space-x-2 mb-3">
+          <input
+            type="text"
+            value={usernameInput}
+            onChange={e => setUsernameInput(e.target.value)}
+            placeholder="Enter patient username"
+            className="border px-3 py-2 flex-grow rounded"
+          />
+          <button
+            onClick={() => setTriageUsername(usernameInput.trim())}
+            className="bg-blue-600 text-white px-4 py-2 rounded"
+          >
+            Load Patient
+          </button>
         </div>
-        <div className="w-2/3">
-          {selectedPatient ? (
-            <CareTeamPatientView patient={selectedPatient} />
-          ) : (
-            <p>Select a patient to view profile and chat history.</p>
-          )}
-        </div>
+        {triageUsername && profile
+          ? <NurseAssistantChat
+              patientUsername={triageUsername}
+              profile={profile}
+            />
+          : <p className="text-sm text-gray-600">— awaiting patient username …</p>}
+      </div>
+
+      {/* ── Clickable List of All Patients ── */}
+      <div className="bg-white border rounded shadow p-4">
+        <h3 className="font-semibold text-lg mb-2">📋 Your Patients</h3>
+        <ul className="divide-y">
+          {patients.map(p => (
+            <li
+              key={p.username}
+              onClick={() => navigate(`/care-team/patient/${p.username}`)}
+              className="py-2 px-3 cursor-pointer hover:bg-gray-100"
+            >
+              {p.name} ({p.username})
+            </li>
+          ))}
+        </ul>
       </div>
     </div>
-  );
+  )
 }
 
-export default CareTeamDashboard;
+

@@ -1,71 +1,85 @@
-// src/components/CareTeamPatientView.js
 import React, { useEffect, useState } from 'react';
 import ChatWithCareTeam from './ChatWithCareTeam';
 import NurseAIChat      from './NurseAIChat';
+import ProfileTable     from './ProfileTable';
 
-function CareTeamPatientView({ patient }) {
+export default function CareTeamPatientView({ patient }) {
   const [vitals, setVitals]               = useState(null);
   const [messages, setMessages]           = useState([]);
   const [summary, setSummary]             = useState('');
   const [parsedProfile, setParsedProfile] = useState(null);
   const [missingFields, setMissingFields] = useState([]);
+  const [alerts, setAlerts]               = useState([]);
   const [loading, setLoading]             = useState(false);
 
-  // ── 1) Load saved structured profile + missing_fields ─────────
-  const refreshProfile = async () => {
-    if (!patient) return;
-    try {
-      const res  = await fetch(`http://127.0.0.1:5000/profile/${patient.username}`);
-      const json = await res.json();
-      if (json.profile) {
-        setParsedProfile(json.profile);
-        setMissingFields(json.profile.missing_fields || []);
-      }
-    } catch (err) {
-      console.error('Error loading profile:', err);
-    }
-  };
-
-  // ── 2) Load vitals (optional display) ───────────────────────────
-  const loadVitals = async () => {
-    try {
-      const res  = await fetch(`http://127.0.0.1:5000/vitals/${patient.username}`);
-      const json = await res.json();
-      setVitals(json);
-    } catch (err) {
-      console.error('Error loading vitals:', err);
-    }
-  };
-
-  // ── 3) Load persistent patient↔care chat ────────────────────────
-  const loadChat = async () => {
-    try {
-      const res  = await fetch(`http://127.0.0.1:5000/patient-chat/${patient.username}`);
-      const json = await res.json();
-      setMessages(
-        (json.messages || []).map(m => ({
-          role:      m.sender,    // 'user' or 'nurse'
-          content:   m.content,
-          timestamp: m.timestamp
-        }))
-      );
-    } catch (err) {
-      console.error('Error loading chat:', err);
-    }
-  };
-
+  /** 1️⃣ Refresh structured profile + alerts + missing_fields **/
   useEffect(() => {
     if (!patient) return;
-    loadVitals();
-    loadChat();
+    async function refreshProfile() {
+      try {
+        const res  = await fetch(`http://127.0.0.1:5000/profile/${patient.username}`);
+        const json = await res.json();
+        if (json.profile) {
+          const p = json.profile;
+          setParsedProfile(p);
+          setMissingFields(p.missing_fields || []);
+          setAlerts(
+            (p.alerts || []).map(a => {
+              const refs = Array.isArray(a.guideline_ref)
+                ? a.guideline_ref.join(', ')
+                : a.guideline_ref || '';
+              return `${a.parameter}: ${a.value}` + (refs ? ` (Refs: ${refs})` : '');
+            })
+          );
+        }
+      } catch (err) {
+        console.error('Error loading profile:', err);
+      }
+    }
     refreshProfile();
-  }, [patient]);
+  }, [patient.username]);
 
-  // ── 4) Parse free-text summary, fire off AI follow-ups, save profile ──
+  /** 2️⃣ Load vitals (optional) **/
+  useEffect(() => {
+    if (!patient) return;
+    async function loadVitals() {
+      try {
+        const res  = await fetch(`http://127.0.0.1:5000/vitals/${patient.username}`);
+        const json = await res.json();
+        setVitals(json);
+      } catch (err) {
+        console.error('Error loading vitals:', err);
+      }
+    }
+    loadVitals();
+  }, [patient.username]);
+
+  /** 3️⃣ Load persistent patient↔care chat **/
+  useEffect(() => {
+    if (!patient) return;
+    async function loadChat() {
+      try {
+        const res  = await fetch(`http://127.0.0.1:5000/patient-chat/${patient.username}`);
+        const json = await res.json();
+        setMessages(
+          (json.messages || []).map(m => ({
+            role:      m.sender,
+            content:   m.content,
+            timestamp: m.timestamp
+          }))
+        );
+      } catch (err) {
+        console.error('Error loading chat:', err);
+      }
+    }
+    loadChat();
+  }, [patient.username]);
+
+  /** 4️⃣ Parse & save + auto‐follow-up questions **/
   const handleParseAndSave = async () => {
     setLoading(true);
     try {
-      // a) Parse
+      // parse
       const res1 = await fetch('http://127.0.0.1:5000/parse-profile', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -74,32 +88,41 @@ function CareTeamPatientView({ patient }) {
       const data = await res1.json();
       if (!data.parsed) {
         alert('⚠️ AI returned no structured data.');
+        setLoading(false);
         return;
       }
 
-      // b) Update local profile & missing fields
+      // update UI state
       setParsedProfile(data.parsed);
       setMissingFields(data.parsed.missing_fields || []);
+      setAlerts(
+        (data.parsed.alerts || []).map(a => {
+          const refs = Array.isArray(a.guideline_ref)
+            ? a.guideline_ref.join(', ')
+            : a.guideline_ref || '';
+          return `${a.parameter}: ${a.value}` + (refs ? ` (Refs: ${refs})` : '');
+        })
+      );
 
-      // c) Send system-generated follow-up questions via care-chat
-      for (let field of data.parsed.missing_fields || []) {
+      // auto‐send follow-ups
+      for (let f of data.parsed.missing_fields || []) {
         await fetch('http://127.0.0.1:5000/care-chat', {
           method:  'POST',
           headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({
+          body: JSON.stringify({
             username: patient.username,
             sender:   'nurse',
-            content:  field.question,
+            content:  f.question,
             meta:     { system_generated: true }
           })
         });
       }
 
-      // d) Save the structured profile back to server
+      // save
       const res2 = await fetch('http://127.0.0.1:5000/save-profile', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({
+        body: JSON.stringify({
           username: patient.username,
           profile:  data.parsed,
           input:    summary
@@ -107,7 +130,6 @@ function CareTeamPatientView({ patient }) {
       });
       if (res2.ok) {
         alert('✅ Patient profile updated successfully!');
-        refreshProfile();
       } else {
         alert('❌ Failed to save profile.');
       }
@@ -119,7 +141,7 @@ function CareTeamPatientView({ patient }) {
     }
   };
 
-  // ── 5) Send a new care-team → patient message ────────────────────
+  /** 5️⃣ Send a new care-team → patient message **/
   const handleSend = async ({ role, content }) => {
     try {
       await fetch('http://127.0.0.1:5000/patient-chat', {
@@ -127,17 +149,26 @@ function CareTeamPatientView({ patient }) {
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({
           username: patient.username,
-          sender:   role,     // e.g. 'nurse'
+          sender:   role,
           content
         })
       });
-      await loadChat();
+      // reload chat
+      const res  = await fetch(`http://127.0.0.1:5000/patient-chat/${patient.username}`);
+      const json = await res.json();
+      setMessages(
+        (json.messages || []).map(m => ({
+          role:      m.sender,
+          content:   m.content,
+          timestamp: m.timestamp
+        }))
+      );
     } catch (err) {
       console.error('Error sending message:', err);
     }
   };
 
-  // ── 6) Clear entire patient-care chat history ───────────────────
+  /** 6️⃣ Clear chat history **/
   const handleClearHistory = async () => {
     if (!window.confirm('Delete all patient chat history?')) return;
     try {
@@ -148,18 +179,21 @@ function CareTeamPatientView({ patient }) {
     }
   };
 
-  // ── JSON pretty-printer ──────────────────────────────────────────
-  const renderJsonView = obj => (
-    <pre className="bg-gray-100 text-xs p-3 rounded overflow-auto max-h-96">
-      {JSON.stringify(obj, null, 2)}
-    </pre>
-  );
-
   return (
     <div className="p-6 max-w-4xl mx-auto">
-      {/* Profile + summary input */}
+      {/* Alerts banner */}
+      {alerts.length > 0 && (
+        <div className="mb-4 p-3 bg-red-100 text-red-800 rounded">
+          <strong>🚨 Alerts:</strong>
+          <ul className="list-disc pl-5">
+            {alerts.map((msg, i) => <li key={i}>{msg}</li>)}
+          </ul>
+        </div>
+      )}
+
       <h3 className="text-xl font-semibold mb-3">🧾 Profile: {patient.name}</h3>
 
+      {/* free-text summary input */}
       <textarea
         value={summary}
         onChange={e => setSummary(e.target.value)}
@@ -177,11 +211,11 @@ function CareTeamPatientView({ patient }) {
         {loading ? 'Parsing patient summary…' : 'Parse & Save Profile via AI'}
       </button>
 
-      {/* Structured Profile JSON */}
+      {/* Structured Profile table */}
       {parsedProfile && (
         <div className="mb-6">
-          <h5 className="text-md font-semibold mb-2">Structured Profile (JSON)</h5>
-          {renderJsonView(parsedProfile)}
+          <h5 className="text-md font-semibold mb-2">Structured Profile</h5>
+          <ProfileTable profile={parsedProfile} />
         </div>
       )}
 
@@ -202,12 +236,18 @@ function CareTeamPatientView({ patient }) {
           <NurseAIChat
             username={patient.username}
             questions={missingFields}
-            onUpdate={refreshProfile}
+            onUpdate={() => {
+              /* after they answer follow-up, re-load profile */
+              fetch(`http://127.0.0.1:5000/profile/${patient.username}`)
+                .then(r => r.json())
+                .then(j => setParsedProfile(j.profile))
+                .catch(console.error);
+            }}
           />
         </div>
       )}
 
-      {/* Chat header + clear button */}
+      {/* Patient ↔ Care-Team chat */}
       <div className="flex justify-between items-center mb-2">
         <h5 className="text-lg font-semibold">Patient ↔ Care-Team Chat</h5>
         <button
@@ -218,17 +258,19 @@ function CareTeamPatientView({ patient }) {
         </button>
       </div>
 
-      {/* Persistent chat */}
       <ChatWithCareTeam
         messages={messages}
         onSubmit={handleSend}
         useBot={false}
+        currentSender="nurse"
       />
     </div>
   );
 }
 
-export default CareTeamPatientView;
+
+
+
 
 
 
