@@ -215,7 +215,7 @@ def sonar_chat():
     profile = PatientProfile.query.filter_by(user_id=user.id).first()
     profile_data = profile.data if profile else {}
 
-    # 3️⃣ Build the brief human summary + inline full‐JSON block
+    ''''# 3️⃣ Build the brief human summary + inline full‐JSON block
     demo       = profile_data.get('demographics', {})
     vitals_map = profile_data.get('vitals_biometrics', {})
     meds_data  = profile_data.get('medications', [])
@@ -239,7 +239,7 @@ def sonar_chat():
           meds_list.append(key)
     else:
       meds_list = [str(meds_data)]
-    meds_str = ", ".join(meds_list) or "None"
+    meds_str = ", ".join(meds_list) or "None"'''
 
     # assemble full JSON block + human summary
     patient_context = (
@@ -247,11 +247,7 @@ def sonar_chat():
       "```json\n"
       f"{json.dumps(profile_data, indent=2)}\n"
       "```\n\n"
-      "Key Summary:\n"
       f"- Name: {user.name}\n"
-      f"- Age/Sex: {demo.get('age','?')}/{demo.get('sex','?')}\n"
-      f"- Vitals: {vitals_str}\n"
-      f"- Medications: {meds_str}\n\n"
     )
 
     # 4️⃣ Flatten chat history
@@ -344,31 +340,51 @@ def get_vitals(username):
 
 @app.route('/bored-chat', methods=['POST'])
 def bored_chat():
-    data = request.get_json()
+    data     = request.get_json(force=True)
+    username = data.get('username')
     messages = data.get('messages', [])
-    patient = data.get('patient', {})
 
+    # 1️⃣ Validate inputs
+    if not username:
+        return jsonify({'error': 'Missing username'}), 400
     if not messages:
         return jsonify({'error': 'No messages provided'}), 400
 
-    convo = "\n".join([f"{msg['role']}: {msg['content']}" for msg in messages])
+    # 2️⃣ Lookup user
+    user = User.query.filter_by(username=username).first()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+
+    # 3️⃣ Fetch profile JSON
+    profile = PatientProfile.query.filter_by(user_id=user.id).first()
+    profile_data = profile.data if profile else {}
+
+    # 4️⃣ Assemble patient context with raw JSON
     patient_context = (
-        f"The user you're chatting with is named {patient.get('name', 'Bob')}, age {patient.get('age', 'unknown')}.\n"
-        f"They have the following conditions: {', '.join(patient.get('conditions', [])) or 'none listed'}.\n"
-        f"Their latest vitals include BP: {patient.get('vitals', {}).get('bp', 'N/A')}, HR: {patient.get('vitals', {}).get('hr', 'N/A')}.\n\n"
+        "Here is your FULL PROFILE (JSON):\n"
+        "```json\n"
+        f"{json.dumps(profile_data, indent=2)}\n"
+        "```\n\n"
+        f"- Name: {user.name}\n"
     )
 
-    prompt = (
-        f"You are a friendly AI assistant for bored patients. When patients are bored or anxious, you teach them fun, useful, or health-related facts in simple terms.\n\n"
-        f"{patient_context}"
-        f"Here is a chat history with the patient:\n\n"
-        f"{convo}\n\n"
-        f"Answer clearly and make the patient feel engaged. If they ask about their medical condition, respond with empathy and education. "
-        f"If they ask about something random (like 'why is the sky blue'), explain it in an accessible way. Keep answers under 5 sentences and cite sources where helpful.\n"
-        f"Use a human-friendly conversational tone and only site sources when necessary."
-    )
+    # 5️⃣ Flatten chat history
+    convo = "\n".join(f"{m['role']}: {m['content']}" for m in messages)
 
-    print("📨 Final prompt to Sonar (bored mode):\n", prompt)
+    # 6️⃣ Friendly final prompt for bored patients
+    full_prompt = f"""
+You are a friendly AI assistant for bored patients. When patients are bored or anxious, you teach them fun, useful, or health-related facts in simple terms.
+Keep the conversation appropriate.
+
+{patient_context}
+
+**Chat so far:**  
+{convo}
+
+**Your response (keep it friendly and under 5 sentences, cite sources if needed):**
+"""
+
+    print("📨 Prompt to Sonar (bored mode):\n", full_prompt)
 
     try:
         response = requests.post(
@@ -379,22 +395,24 @@ def bored_chat():
             },
             json={
                 "model": "sonar-reasoning",
-                "messages": [{"role": "user", "content": prompt}]
+                "messages": [{"role": "user", "content": full_prompt}]
             }
         )
-
+        response.raise_for_status()
         raw = response.json()
-        print("📬 Raw Bored Chat Response:", raw)
+        print("📬 Raw Bored Chat Response:", json.dumps(raw, indent=2))
 
         content = raw['choices'][0]['message']['content']
         clean = clean_response(content)
         sources = raw.get('citations', [])
-        return jsonify({'answer': clean, 'citations': sources})
+        return jsonify({'answer': clean, 'citations': sources}), 200
 
     except Exception as e:
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
+
+
 
 @app.route('/care-chat', methods=['POST'])
 def save_care_chat_message():
@@ -814,10 +832,83 @@ def nurse_chat():
     #    • Clear instructions to parse/validate/alert
     full_prompt = f"""
 You are a **nurse triage assistant**.  You must use only trusted clinical guidelines, case-studies and the master schema to:
-  1. Rigorously validate this patient’s JSON profile against the Chronic Disease Management schema (AHA, ADA, GINA, GOLD…).
+  1. Rigorously validate this patient’s JSON profile against the Master schema (AHA, ADA, GINA, GOLD…).
   2. Generate any missing follow-up questions (for required fields).
   3. Identify alerts (e.g. weight gain, hypoxemia, A1c thresholds).
   4. Answer the nurse’s actual question below *in context* of this patient.
+  
+  Master Schema:
+  # 🧾 MASTER PROFILE REQUIREMENTS
+
+1. **Chronic Disease Management (HF, DM, Asthma, COPD)**
+   - Core Vital/Biometric Inputs (sensor ➜ LOINC): 
+     • Weight ➜ 29463-7 
+     • HR/SBP/DBP ➜ 8867-4 / 8480-6 / 8462-4 
+     • SpO₂ ➜ 59408-5 
+     • Glucose ➜ 2339-0 
+   - Required History: 
+     • Age, sex 
+     • NYHA class 
+     • A1c & diabetes meds 
+     • Asthma severity / GOLD stage 
+   - Alert Thresholds: 
+     • SpO₂ < 88% (GOLD 2023) 
+     • Weight ↑ >2kg/3d (AHA 2022) 
+     • A1c > 9% (ADA 2025)
+   - Evidence: [1][2][3][4]
+
+2. **Post-Operative Recovery**
+   - Core Vitals:
+     • HR ➜ 8867-4 
+     • BP ➜ 8480-6 
+     • Temp ➜ 8310-5 
+   - Required History:
+     • Procedure type 
+     • VTE risk 
+     • Opioid regimen 
+   - Alert:
+     • Temp >38.5°C 
+     • SBP <90 mmHg 
+   - Evidence: [5]
+
+3. **Oncology Monitoring**
+   - Inputs:
+     • Temp ➜ 8310-5 
+     • Weight ➜ 29463-7 
+   - Required:
+     • ANC, cancer stage, ICI use 
+   - Alert:
+     • Temp ≥38°C + ANC <500 
+   - Evidence: [6]
+
+4. **Maternal-Fetal Monitoring**
+   - Inputs:
+     • BP ➜ 8480-6 
+     • FHR ➜ 56085-1 
+   - Required:
+     • Gestational age, pre-eclampsia risk 
+   - Alert:
+     • BP ≥140/90, FHR <110/>160 
+   - Evidence: [8]
+
+5. **Substance Use**
+   - Inputs:
+     • Transdermal EtOH, HR ➜ 8867-4 
+   - Required:
+     • AUDIT score, naltrexone use 
+   - Alert:
+     • TAC ≥0.02% 
+   - Evidence: [21]
+
+# 📚 Sources
+1. AHA 2022 HF - doi:10.1161/CIR.0000000000001063
+2. ADA 2025 - https://diabetesjournals.org/care/article/48/Supplement_1/S6
+3. GINA 2024 - https://ginasthma.org
+4. GOLD 2023 - https://goldcopd.org
+5. ERAS 2025 - https://erassociety.org
+6. ASCO 2024 - https://connectwithcare.org
+8. ACOG/AHRQ Maternal RPM 2025
+21. SOBRsafe EtOH Validation - https://ir.sobrsafe.com
 
 ---
 
@@ -872,4 +963,4 @@ def home():
 if __name__ == '__main__':
     print("Registered routes:")
     print(app.url_map)
-    app.run(host = '0.0.0.0',debug = True)
+    app.run(port=5000)

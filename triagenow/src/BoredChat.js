@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
+import { useAuth } from './AuthContext';  // 👈 Make sure this exists
 
 function BoredChat() {
+  const { user } = useAuth();  // 👈 Pull logged-in user info
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -17,7 +19,10 @@ function BoredChat() {
       const res = await fetch('http://127.0.0.1:5000/bored-chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: newMessages })
+        body: JSON.stringify({
+          username: user?.username,   // 👈 Add this line
+          messages: newMessages
+        })
       });
 
       const data = await res.json();
@@ -62,4 +67,5 @@ function BoredChat() {
 }
 
 export default BoredChat;
+
 

@@ -39,7 +39,7 @@ function NurseAIChat({ username, questions, onUpdate }) {
   if (submitted) {
     return (
       <div className="text-green-600 p-4">
-        ✅ Thank you for providing the responses!
+        ✅ Thank you for providing a response!!
       </div>
     );
   }
