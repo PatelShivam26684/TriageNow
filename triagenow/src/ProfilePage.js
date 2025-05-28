@@ -3,7 +3,8 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from './AuthContext';
 import ViewVitals from './ViewVitals';
-import ProfileTable from './ProfileTable';    // ← our shared table component
+import ProfileTable from './ProfileTable';
+import {BACKEND_URL} from "./config";    // ← our shared table component
 
 export default function ProfilePage() {
   const { user } = useAuth();
@@ -11,7 +12,7 @@ export default function ProfilePage() {
 
   useEffect(() => {
     if (!user) return;
-    fetch(`http://127.0.0.1:5000/profile/${user.username}`)
+    fetch(`${BACKEND_URL}/${user.username}`)
       .then(res => res.json())
       .then(data => {
         if (data.profile) {

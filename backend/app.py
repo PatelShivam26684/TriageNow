@@ -18,6 +18,7 @@ from models import PatientProfile, User
 
 
 
+
 def clean_response(raw_text):
     # Remove <think> blocks
     clean_text = re.sub(r"<think>.*?</think>", "", raw_text, flags=re.DOTALL)
@@ -31,8 +32,9 @@ def clean_response(raw_text):
     return clean_text.strip()
 
 app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///users.db'
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+print("Connected to DB:", app.config['SQLALCHEMY_DATABASE_URI'])
 
 db.init_app(app)
 bcrypt.init_app(app)

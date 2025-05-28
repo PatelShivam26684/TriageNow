@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import ChatWithCareTeam from './ChatWithCareTeam';
 import NurseAIChat      from './NurseAIChat';
 import ProfileTable     from './ProfileTable';
+import { BACKEND_URL } from './config';
 
 export default function CareTeamPatientView({ patient }) {
   const [vitals, setVitals]               = useState(null);
@@ -17,7 +18,7 @@ export default function CareTeamPatientView({ patient }) {
     if (!patient) return;
     async function refreshProfile() {
       try {
-        const res  = await fetch(`http://127.0.0.1:5000/profile/${patient.username}`);
+        const res  = await fetch(`${BACKEND_URL}/profile/${patient.username}`);
         const json = await res.json();
         if (json.profile) {
           const p = json.profile;
@@ -44,7 +45,7 @@ export default function CareTeamPatientView({ patient }) {
     if (!patient) return;
     async function loadVitals() {
       try {
-        const res  = await fetch(`http://127.0.0.1:5000/vitals/${patient.username}`);
+        const res  = await fetch(`${BACKEND_URL}/vitals/${patient.username}`);
         const json = await res.json();
         setVitals(json);
       } catch (err) {
@@ -59,7 +60,7 @@ export default function CareTeamPatientView({ patient }) {
     if (!patient) return;
     async function loadChat() {
       try {
-        const res  = await fetch(`http://127.0.0.1:5000/patient-chat/${patient.username}`);
+        const res  = await fetch(`${BACKEND_URL}/patient-chat/${patient.username}`);
         const json = await res.json();
         setMessages(
           (json.messages || []).map(m => ({
@@ -80,7 +81,7 @@ export default function CareTeamPatientView({ patient }) {
     setLoading(true);
     try {
       // parse
-      const res1 = await fetch('http://127.0.0.1:5000/parse-profile', {
+      const res1 = await fetch(`${BACKEND_URL}/parse-profile`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ input: summary, username: patient.username })
@@ -106,7 +107,7 @@ export default function CareTeamPatientView({ patient }) {
 
       // auto‐send follow-ups
       for (let f of data.parsed.missing_fields || []) {
-        await fetch('http://127.0.0.1:5000/care-chat', {
+        await fetch(`${BACKEND_URL}/care-chat`, {
           method:  'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -119,7 +120,7 @@ export default function CareTeamPatientView({ patient }) {
       }
 
       // save
-      const res2 = await fetch('http://127.0.0.1:5000/save-profile', {
+      const res2 = await fetch(`${BACKEND_URL}/save-profile`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -144,7 +145,7 @@ export default function CareTeamPatientView({ patient }) {
   /** 5️⃣ Send a new care-team → patient message **/
   const handleSend = async ({ role, content }) => {
     try {
-      await fetch('http://127.0.0.1:5000/patient-chat', {
+      await fetch(`${BACKEND_URL}/patient-chat`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({
@@ -154,7 +155,7 @@ export default function CareTeamPatientView({ patient }) {
         })
       });
       // reload chat
-      const res  = await fetch(`http://127.0.0.1:5000/patient-chat/${patient.username}`);
+      const res  = await fetch(`${BACKEND_URL}/patient-chat/${patient.username}`);
       const json = await res.json();
       setMessages(
         (json.messages || []).map(m => ({
@@ -172,7 +173,7 @@ export default function CareTeamPatientView({ patient }) {
   const handleClearHistory = async () => {
     if (!window.confirm('Delete all patient chat history?')) return;
     try {
-      await fetch(`http://127.0.0.1:5000/patient-chat/${patient.username}`, { method: 'DELETE' });
+      await fetch(`${BACKEND_URL}/patient-chat/${patient.username}`, { method: 'DELETE' });
       setMessages([]);
     } catch (err) {
       console.error('Error clearing history:', err);
@@ -238,7 +239,7 @@ export default function CareTeamPatientView({ patient }) {
             questions={missingFields}
             onUpdate={() => {
               /* after they answer follow-up, re-load profile */
-              fetch(`http://127.0.0.1:5000/profile/${patient.username}`)
+              fetch(`${BACKEND_URL}/profile/${patient.username}`)
                 .then(r => r.json())
                 .then(j => setParsedProfile(j.profile))
                 .catch(console.error);

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from './AuthContext';
 import { useNavigate } from 'react-router-dom';
+import { BACKEND_URL } from './config';
 
 
 function Login() {
@@ -22,7 +23,7 @@ function Login() {
     setMessage('');
 
     try {
-      const res = await fetch('http://127.0.0.1:5000/login', {
+      const res = await fetch(`${BACKEND_URL}/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formData)

@@ -1,6 +1,7 @@
 // src/components/NurseAssistantChat.js
 import React, { useState } from 'react';
 import ChatWithCareTeam from './ChatWithCareTeam';
+import {BACKEND_URL} from "./config";
 
 export default function NurseAssistantChat({ patientUsername, profile }) {
   const [messages, setMessages] = useState([]);
@@ -19,7 +20,7 @@ export default function NurseAssistantChat({ patientUsername, profile }) {
 
     try {
       // 2) hit your new nurse-chat endpoint
-      const res = await fetch('http://127.0.0.1:5000/nurse-chat', {
+      const res = await fetch(`${BACKEND_URL}/nurse-chat`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({

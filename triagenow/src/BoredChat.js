@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from './AuthContext';  // 👈 Make sure this exists
+import { BACKEND_URL } from './config';
 
 function BoredChat() {
   const { user } = useAuth();  // 👈 Pull logged-in user info
@@ -16,7 +17,7 @@ function BoredChat() {
     setLoading(true);
 
     try {
-      const res = await fetch('http://127.0.0.1:5000/bored-chat', {
+      const res = await fetch(`${BACKEND_URL}/bored-chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

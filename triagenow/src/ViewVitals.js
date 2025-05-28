@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from './AuthContext';
+import {BACKEND_URL} from "./config";
 
 function ViewVitals() {
   const { user } = useAuth();
@@ -9,7 +10,7 @@ function ViewVitals() {
   useEffect(() => {
     const fetchVitals = async () => {
       try {
-        const res = await fetch(`http://127.0.0.1:5000/vitals/${user.username}`);
+        const res = await fetch(`${BACKEND_URL}/vitals/${user.username}`);
         const data = await res.json();
         if (res.ok) {
           setVitals(data);

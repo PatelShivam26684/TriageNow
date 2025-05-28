@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import {BACKEND_URL} from "./config";
 
 function NurseAIChat({ username, questions, onUpdate }) {
   const [responses, setResponses] = useState({});
@@ -12,7 +13,7 @@ function NurseAIChat({ username, questions, onUpdate }) {
     try {
       const payload = { username, updates: responses };
       console.log("🔁 Sending reprocess-profile request:", payload);
-      const res = await fetch('http://127.0.0.1:5000/reprocess-profile', {
+      const res = await fetch(`${BACKEND_URL}/reprocess-profile`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)

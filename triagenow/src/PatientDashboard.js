@@ -3,6 +3,7 @@ import { useNavigate }        from 'react-router-dom';
 import { useAuth }            from './AuthContext';
 import ChatWithSonar          from './ChatWithSonar';
 import ChatWithCareTeam       from './ChatWithCareTeam';
+import {BACKEND_URL} from "./config";
 
 export default function PatientDashboard() {
   const { user } = useAuth();
@@ -26,7 +27,7 @@ export default function PatientDashboard() {
     if (!user) return;
     async function fetchProfile() {
       try {
-        const res  = await fetch(`http://127.0.0.1:5000/profile/${user.username}`);
+        const res  = await fetch(`${BACKEND_URL}/profile/${user.username}`);
         const json = await res.json();
         if (json.profile) {
           setProfile(json.profile);
@@ -49,7 +50,7 @@ export default function PatientDashboard() {
   async function loadHistory() {
     if (!user) return;
     try {
-      const res  = await fetch(`http://127.0.0.1:5000/patient-chat/${user.username}`);
+      const res  = await fetch(`${BACKEND_URL}/patient-chat/${user.username}`);
       const json = await res.json();
       setCareTeamMessages(
         (json.messages || []).map(m => ({
@@ -69,7 +70,7 @@ export default function PatientDashboard() {
   /** 3️⃣ Send a new patient‐team message **/
   const handleCareTeamSubmit = async ({ role, content }) => {
     try {
-      await fetch('http://127.0.0.1:5000/patient-chat', {
+      await fetch(`${BACKEND_URL}/patient-chat`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({
@@ -88,7 +89,7 @@ export default function PatientDashboard() {
   const handleClearHistory = async () => {
     if (!window.confirm("Delete your chat history?")) return;
     try {
-      await fetch(`http://127.0.0.1:5000/patient-chat/${user.username}`, {
+      await fetch(`${BACKEND_URL}/patient-chat/${user.username}`, {
         method: 'DELETE'
       });
       setCareTeamMessages([]);

@@ -1,5 +1,6 @@
 // src/components/ChatWithSonar.js
 import React, { useState } from 'react';
+import {BACKEND_URL} from "./config";
 
 export default function ChatWithSonar({ username, profile }) {
   const [messages, setMessages] = useState([]);
@@ -24,7 +25,7 @@ export default function ChatWithSonar({ username, profile }) {
     console.log('📤 Sending to /sonar-chat:', payload);
 
     try {
-      const res  = await fetch('http://127.0.0.1:5000/sonar-chat', {
+      const res  = await fetch(`${BACKEND_URL}/sonar-chat`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify(payload)

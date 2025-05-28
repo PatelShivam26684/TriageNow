@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { BACKEND_URL } from './config';
 
 function AdminDashboard() {
   const [users, setUsers] = useState([]);
@@ -7,14 +8,14 @@ function AdminDashboard() {
   const currentUser = JSON.parse(localStorage.getItem('user'));
 
   useEffect(() => {
-    fetch(`http://127.0.0.1:5000/users?admin=${currentUser.username}`)
+    fetch(`${BACKEND_URL}/users?admin=${currentUser.username}`)
       .then(res => res.json())
       .then(data => setUsers(data.users))
       .catch(() => setMessage('❌ Failed to fetch users.'));
-  }, []);
+  }, [currentUser.username]);
 
   const handleRoleChange = async (username, role) => {
-    const res = await fetch('http://127.0.0.1:5000/update-role', {
+    const res = await fetch(`${BACKEND_URL}/update-role`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ admin: currentUser.username, username, role })

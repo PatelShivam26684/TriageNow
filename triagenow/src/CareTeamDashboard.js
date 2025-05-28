@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth }     from './AuthContext'
 import NurseAssistantChat from './NurseAssistantChat'
+import { BACKEND_URL } from './config';
 
 export default function CareTeamDashboard() {
   const { user } = useAuth()
@@ -14,7 +15,7 @@ export default function CareTeamDashboard() {
 
   // load your patient list
   useEffect(() => {
-    fetch('http://127.0.0.1:5000/patients')
+    fetch(`${BACKEND_URL}/patients`)
       .then(r => r.json())
       .then(setPatients)
       .catch(console.error)
@@ -23,7 +24,7 @@ export default function CareTeamDashboard() {
   // when nurse enters a username, fetch that patient’s saved profile
   useEffect(() => {
     if (!triageUsername) return
-    fetch(`http://127.0.0.1:5000/profile/${triageUsername}`)
+    fetch(`${BACKEND_URL}/profile/${triageUsername}`)
       .then(r => r.json())
       .then(d => {
         setProfile(d.profile || null)
