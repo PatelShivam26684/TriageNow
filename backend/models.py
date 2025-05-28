@@ -90,12 +90,13 @@ class CareChatMessage(db.Model):
 
 
 class PatientProfile(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), unique=True, nullable=False)
-    data = db.Column(db.JSON)
-    original_input = db.Column(db.Text)  # Store original clinical summary
-    missing_fields_snapshot = db.Column(db.JSON)  # Store missing fields state
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    id                      = db.Column(db.Integer, primary_key=True)
+    user_id                 = db.Column(db.Integer, db.ForeignKey('user.id'), unique=True, nullable=False)
+    data                    = db.Column(db.JSON)
+    original_input          = db.Column(db.Text)
+    missing_fields_snapshot = db.Column(db.JSON)
+    alerts_snapshot         = db.Column(db.JSON)            # ← NEW
+    updated_at              = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 class PatientChatMessage(db.Model):
     __tablename__ = 'patient_chat_messages'
@@ -104,3 +105,4 @@ class PatientChatMessage(db.Model):
     sender = db.Column(db.String(50), nullable=False)     # e.g. 'user' or 'nurse'
     content = db.Column(db.Text, nullable=False)
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+    user = db.relationship('User', backref='patient_messages')

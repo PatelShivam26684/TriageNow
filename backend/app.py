@@ -3,7 +3,7 @@ from flask_cors import CORS
 import requests
 import os
 from dotenv import load_dotenv
-import re
+import re,traceback
 from markdown import markdown
 load_dotenv()
 from models import db, bcrypt, User
@@ -12,6 +12,7 @@ import json5 as json
 from flask_cors import cross_origin
 from flask import url_for
 from models import Vitals, CareChatMessage, PatientProfile, PatientChatMessage
+from models import PatientProfile, User
 
 
 
@@ -44,12 +45,6 @@ with app.app_context():
         db.session.add(root)
         db.session.commit()
         print("✅ Root admin created with username='rootadmin' and password='admin123'")
-    test_user = User.query.filter_by(username='bob').first()
-    if test_user and not test_user.vitals:
-        demo_vitals = Vitals(user_id=test_user.id, bp="122/78", hr=70, weight=72.5, temp=98.6)
-        db.session.add(demo_vitals)
-        db.session.commit()
-        print("✅ Demo vitals inserted for bob")
 
 
 
@@ -201,63 +196,113 @@ def update_user_role():
 
 @app.route('/sonar-chat', methods=['POST'])
 def sonar_chat():
-    data = request.get_json()
+    data     = request.get_json(force=True)
+    username = data.get('username')
     messages = data.get('messages', [])
-    patient = data.get('patient', {})
 
+    # 1️⃣ Validate inputs
+    if not username:
+        return jsonify({'error': 'Missing username'}), 400
     if not messages:
         return jsonify({'error': 'No messages provided'}), 400
 
-    convo = "\n".join([f"{msg['role']}: {msg['content']}" for msg in messages])
+    # lookup user
+    user = User.query.filter_by(username=username).first()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+
+    # 2️⃣ Fetch the stored profile JSON
+    profile = PatientProfile.query.filter_by(user_id=user.id).first()
+    profile_data = profile.data if profile else {}
+
+    # 3️⃣ Build the brief human summary + inline full‐JSON block
+    demo       = profile_data.get('demographics', {})
+    vitals_map = profile_data.get('vitals_biometrics', {})
+    meds_data  = profile_data.get('medications', [])
+
+    # format vitals
+    vitals_str = ", ".join(
+      f"{k}={v.get('value')}{v.get('unit','')}"
+      for k, v in vitals_map.items()
+      if isinstance(v, dict) and v.get('value') is not None
+    ) or "None"
+
+    # flatten meds whether list or dict
+    if isinstance(meds_data, list):
+      meds_list = meds_data
+    elif isinstance(meds_data, dict):
+      meds_list = []
+      for key, val in meds_data.items():
+        if isinstance(val, list):
+          meds_list += val
+        else:
+          meds_list.append(key)
+    else:
+      meds_list = [str(meds_data)]
+    meds_str = ", ".join(meds_list) or "None"
+
+    # assemble full JSON block + human summary
     patient_context = (
-        f"You are helping a patient named {patient.get('name', 'Bob')}, age {patient.get('age', 'unknown')}.\n"
-        f"The patient has: {', '.join(patient.get('conditions', [])) or 'no known conditions'}.\n"
-        f"They are prescribed: {', '.join(patient.get('medications', [])) or 'no medications'}.\n"
-        f"Their latest vitals: blood pressure {patient.get('vitals', {}).get('bp', 'N/A')} and heart rate {patient.get('vitals', {}).get('hr', 'N/A')} bpm.\n\n"
-        f"When responding, speak directly *to* the patient in plain, human-friendly language. Use 'you' instead of 'the patient'. Keep responses to 3–4 sentences. Include source citations at the end."
+      "Here is your FULL PROFILE (JSON):\n"
+      "```json\n"
+      f"{json.dumps(profile_data, indent=2)}\n"
+      "```\n\n"
+      "Key Summary:\n"
+      f"- Name: {user.name}\n"
+      f"- Age/Sex: {demo.get('age','?')}/{demo.get('sex','?')}\n"
+      f"- Vitals: {vitals_str}\n"
+      f"- Medications: {meds_str}\n\n"
     )
 
-    full_prompt = (
-        f"You are a clinical health assistant named SonarCare. Use the following patient context:\n\n"
-        f"{patient_context}\n"
-        f"Here is a chat history with the patient:\n\n"
-        f"{convo}\n\n"
-        f"Respond clearly using medical guidelines. Answer in context using the patient information.\n. "
-        f"Only answer questions about their health, treatment, or monitoring setup. If off-topic, kindly redirect.\n\n"
-        f"Summarize in 3–4 sentences and cite trusted sources at the end."
-    )
+    # 4️⃣ Flatten chat history
+    convo = "\n".join(f"{m['role']}: {m['content']}" for m in messages)
 
-    # 🖨️ Print final prompt for debugging
-    print("📨 Final prompt to Sonar:\n", full_prompt)
+    # 5️⃣ Build your final prompt
+    full_prompt = f"""
+You are SonarCare, a patient‐facing clinical assistant.  You have the patient’s full JSON profile above.
+Use only trusted, up‐to‐date medical guidelines and case studies that physicians rely on.
+Answer in clear, empathetic language (3–4 sentences) and always include a **Sources:** section at the end.
+
+---
+{patient_context}
+
+**Chat so far:**  
+{convo}
+
+**Your response:**
+"""
+
+    # debug print
+    print("📨 Prompt to SonarCare:\n", full_prompt)
 
     try:
-        response = requests.post(
-            "https://api.perplexity.ai/chat/completions",
-            headers={
-                "Authorization": f"Bearer {os.getenv('SONAR_API_KEY')}",
-                "Content-Type": "application/json"
-            },
-            json={
-                "model": "sonar-reasoning",
-                "messages": [{"role": "user", "content": full_prompt}]
-            }
+        resp = requests.post(
+          "https://api.perplexity.ai/chat/completions",
+          headers={
+            "Authorization": f"Bearer {SONAR_API_KEY}",
+            "Content-Type":  "application/json"
+          },
+          json={
+            "model":    "sonar-reasoning",
+            "messages": [{"role": "user", "content": full_prompt}]
+          }
         )
+        resp.raise_for_status()
 
-        # 🔎 Inspect full response including <think> section
-        raw_json = response.json()
-        print("📬 Raw response from Sonar API:")
-        print(raw_json)
+        raw = resp.json()
+        # print entire raw so you can debug in your terminal
+        print("📬 Raw SonarCare response:\n", json.dumps(raw, indent=2))
 
-        raw_answer = raw_json['choices'][0]['message']['content']
-        clean_answer = clean_response(raw_answer)
-        citations = raw_json.get('citations', [])
-
-        return jsonify({'answer': clean_answer, 'citations': citations})
+        answer   = clean_response(raw['choices'][0]['message']['content'])
+        cites    = raw.get('citations', [])
+        return jsonify({'answer': answer, 'citations': cites}), 200
 
     except Exception as e:
-        import traceback
-        traceback.print_exc()
+        import traceback; traceback.print_exc()
         return jsonify({'error': str(e)}), 500
+
+
+
 
 @app.route('/update-vitals', methods=['POST'])
 def update_vitals():
@@ -570,32 +615,43 @@ Use null for unknown values. Do not fabricate. Only ask about *required* missing
 
 @app.route('/save-profile', methods=['POST'])
 def save_profile():
-    data = request.get_json()
-    username = data.get('username')
+    data         = request.get_json()
+    username     = data.get('username')
     profile_data = data.get('profile')
-    input_text = data.get('input')  # Get original clinical summary
+    input_text   = data.get('input')
 
     user = User.query.filter_by(username=username).first()
     if not user:
         return jsonify({'error': 'User not found'}), 404
 
     existing = PatientProfile.query.filter_by(user_id=user.id).first()
-
     if existing:
-        existing.data = profile_data
-        existing.original_input = input_text
+        existing.data                 = profile_data
+        existing.original_input      = input_text
         existing.missing_fields_snapshot = profile_data.get('missing_fields', [])
+        existing.alerts_snapshot        = profile_data.get('alerts', [])
     else:
         new_profile = PatientProfile(
-            user_id=user.id,
-            data=profile_data,
-            original_input=input_text,
-            missing_fields_snapshot=profile_data.get('missing_fields', [])
+            user_id                 = user.id,
+            data                    = profile_data,
+            original_input          = input_text,
+            missing_fields_snapshot = profile_data.get('missing_fields', []),
+            alerts_snapshot         = profile_data.get('alerts', [])
         )
         db.session.add(new_profile)
 
     db.session.commit()
     return jsonify({'message': 'Profile saved'}), 200
+
+@app.route('/alerts/<username>', methods=['GET'])
+def get_alerts(username):
+    user    = User.query.filter_by(username=username).first()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+
+    profile = PatientProfile.query.filter_by(user_id=user.id).first()
+    alerts  = profile.alerts_snapshot if profile else []
+    return jsonify({'alerts': alerts}), 200
 
 
 
@@ -724,6 +780,90 @@ def delete_patient_chat(username):
     PatientChatMessage.query.filter_by(user_id=user.id).delete()
     db.session.commit()
     return jsonify({'message':'Chat history cleared'}), 200
+
+
+import json
+from flask import request, jsonify
+
+@app.route('/nurse-chat', methods=['POST'])
+def nurse_chat():
+    data      = request.get_json(force=True)
+    username  = data.get('username')
+    messages  = data.get('messages', [])
+
+    # 1️⃣ Basic validation
+    if not username:
+        return jsonify({'error': 'Missing username'}), 400
+    if not messages:
+        return jsonify({'error': 'No messages provided'}), 400
+
+    user = User.query.filter_by(username=username).first()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+
+    # 2️⃣ Grab the full AI‐parsed profile JSON you saved earlier
+    profile = PatientProfile.query.filter_by(user_id=user.id).first()
+    profile_data = profile.data if profile else {}
+
+    # 3️⃣ Serialize the chat history
+    convo = "\n".join(f"{m['role']}: {m['content']}" for m in messages)
+
+    # 4️⃣ Build a single prompt that includes:
+    #    • The patient’s entire JSON profile
+    #    • The ongoing chat
+    #    • Clear instructions to parse/validate/alert
+    full_prompt = f"""
+You are a **nurse triage assistant**.  You must use only trusted clinical guidelines, case-studies and the master schema to:
+  1. Rigorously validate this patient’s JSON profile against the Chronic Disease Management schema (AHA, ADA, GINA, GOLD…).
+  2. Generate any missing follow-up questions (for required fields).
+  3. Identify alerts (e.g. weight gain, hypoxemia, A1c thresholds).
+  4. Answer the nurse’s actual question below *in context* of this patient.
+
+---
+
+**PATIENT PROFILE (full JSON):**
+```json
+{json.dumps(profile_data, indent=2)}
+CHAT SO FAR:
+{convo}
+When you reply:
+
+Don’t echo the nurse’s question verbatim.
+
+Do be concise and end with a “Sources:” list.
+
+If there are missing required fields, include them as follow-up questions.
+Nurse’s question →
+"""
+    try:
+        resp = requests.post(
+            "https://api.perplexity.ai/chat/completions",
+            headers={
+                "Authorization": f"Bearer {SONAR_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "sonar-reasoning",
+                "messages": [{"role": "user", "content": full_prompt}]
+            }
+        )
+        resp.raise_for_status()
+        raw = resp.json()
+
+        # dump entire raw for debug if you need:
+        print("📬 Raw nurse-chat response:", json.dumps(raw, indent=2))
+
+        raw_answer = raw['choices'][0]['message']['content']
+        answer = clean_response(raw_answer)
+        citations = raw.get('citations', [])
+
+        return jsonify({'answer': answer, 'citations': citations}), 200
+
+    except Exception as e:
+        import traceback;
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
 
 
 if __name__ == '__main__':
