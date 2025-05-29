@@ -13,7 +13,7 @@ from flask_cors import cross_origin
 from flask import url_for
 from models import Vitals, CareChatMessage, PatientProfile, PatientChatMessage
 from models import PatientProfile, User
-
+import psutil
 
 
 
@@ -469,167 +469,174 @@ def get_patients():
         for p in patients
     ])
 
+# backend/utils/profile_parser.py
+
+import requests
+import re
+import json
+import os
+
+SONAR_API_KEY = os.getenv("SONAR_API_KEY")
+
+def parse_profile_text(input_text: str, username: str = None):
+    if not input_text:
+        raise ValueError("Missing input text")
+
+    prompt = f"""
+    You are a clinical AI assistant designed to extract structured patient data from free-text clinical summaries and updates. You must extract relevant information and validate it against condition-specific monitoring schemas.
+
+    Use the following **master schema** derived from 2025 clinical guidelines (AHA, ADA, GINA, GOLD, etc.). For each use case, there are:
+    - Core vital/biometric requirements (with LOINC references)
+    - Mandatory patient-history elements
+    - Recommended alert/trigger thresholds
+    - Primary guideline source citations
+
+    Do NOT fabricate data. If required fields are missing, respond as a friendly chat assistant and ASK THE USER (e.g., nurse) to provide the missing information.
+
+    ---
+
+    # 🧾 MASTER PROFILE REQUIREMENTS
+
+    1. **Chronic Disease Management (HF, DM, Asthma, COPD)**
+       - Core Vital/Biometric Inputs (sensor ➜ LOINC): 
+         • Weight ➜ 29463-7 
+         • HR/SBP/DBP ➜ 8867-4 / 8480-6 / 8462-4 
+         • SpO₂ ➜ 59408-5 
+         • Glucose ➜ 2339-0 
+       - Required History: 
+         • Age, sex 
+         • NYHA class 
+         • A1c & diabetes meds 
+         • Asthma severity / GOLD stage 
+       - Alert Thresholds: 
+         • SpO₂ < 88% (GOLD 2023) 
+         • Weight ↑ >2kg/3d (AHA 2022) 
+         • A1c > 9% (ADA 2025)
+       - Evidence: [1][2][3][4]
+
+    2. **Post-Operative Recovery**
+       - Core Vitals:
+         • HR ➜ 8867-4 
+         • BP ➜ 8480-6 
+         • Temp ➜ 8310-5 
+       - Required History:
+         • Procedure type 
+         • VTE risk 
+         • Opioid regimen 
+       - Alert:
+         • Temp >38.5°C 
+         • SBP <90 mmHg 
+       - Evidence: [5]
+
+    3. **Oncology Monitoring**
+       - Inputs:
+         • Temp ➜ 8310-5 
+         • Weight ➜ 29463-7 
+       - Required:
+         • ANC, cancer stage, ICI use 
+       - Alert:
+         • Temp ≥38°C + ANC <500 
+       - Evidence: [6]
+
+    4. **Maternal-Fetal Monitoring**
+       - Inputs:
+         • BP ➜ 8480-6 
+         • FHR ➜ 56085-1 
+       - Required:
+         • Gestational age, pre-eclampsia risk 
+       - Alert:
+         • BP ≥140/90, FHR <110/>160 
+       - Evidence: [8]
+
+    5. **Substance Use**
+       - Inputs:
+         • Transdermal EtOH, HR ➜ 8867-4 
+       - Required:
+         • AUDIT score, naltrexone use 
+       - Alert:
+         • TAC ≥0.02% 
+       - Evidence: [21]
+
+    # 📚 Sources
+    1. AHA 2022 HF - doi:10.1161/CIR.0000000000001063
+    2. ADA 2025 - https://diabetesjournals.org/care/article/48/Supplement_1/S6
+    3. GINA 2024 - https://ginasthma.org
+    4. GOLD 2023 - https://goldcopd.org
+    5. ERAS 2025 - https://erassociety.org
+    6. ASCO 2024 - https://connectwithcare.org
+    8. ACOG/AHRQ Maternal RPM 2025
+    21. SOBRsafe EtOH Validation - https://ir.sobrsafe.com
+
+    ---
+
+    ## TASK
+
+    Analyze the following input (which may contain both the original summary and follow-up updates).
+    If there is any follow up updates, you should act like a chatbot considering the response you gave earlier and new responses from the careteam and respond accordingly:
+
+    \"""{input_text}\"""
+
+    1. Extract valid clinical information and incorporate new updates into the existing structure.
+    2. Preserve previously valid data if still applicable.
+    3. Re-evaluate *missing_fields* based on the full current information.
+    4. Return the updated JSON structured profile.
+
+    Output a single raw JSON object with:
+    - demographics
+    - vitals_biometrics (with LOINC)
+    - functional_scores
+    - medications
+    - devices
+    - behavioral_factors
+    - infectious_history
+    - missing_fields (list of dictionaries with parameter, question, guideline_ref)
+    - alerts (trigger violations)
+
+    Use null for unknown values. Do not fabricate. Only ask about *required* missing values.
+    """
+
+    response = requests.post(
+        "https://api.perplexity.ai/chat/completions",
+        headers={
+            "Authorization": f"Bearer {SONAR_API_KEY}",
+            "Content-Type": "application/json"
+        },
+        json={
+            "model": "sonar-reasoning",
+            "messages": [{"role": "user", "content": prompt}]
+        }
+    )
+
+    raw_output = response.json()['choices'][0]['message']['content']
+    cleaned = re.sub(r"<think>.*?</think>", "", raw_output, flags=re.DOTALL).strip()
+    cleaned = re.sub(r"^```json|```$", "", cleaned).strip()
+    json_match = re.search(r'\{[\s\S]*\}', cleaned)
+
+    if not json_match:
+        raise ValueError("No valid JSON object found in cleaned output.")
+
+    json_str = json_match.group()
+    json_str = re.sub(r'//.*', '', json_str)
+    json_str = re.sub(r'/\*[\s\S]*?\*/', '', json_str)
+
+    parsed_json = json.loads(json_str)
+    return parsed_json
+
+
 
 @app.route('/parse-profile', methods=['POST'])
 def parse_profile():
-    import re
-
     data = request.get_json()
     input_text = data.get('input', '')
     username = data.get('username', None)
 
-    if not input_text:
-        return jsonify({'error': 'Missing input text'}), 400
-
-    # Build the Sonar prompt
-    prompt = f"""
-You are a clinical AI assistant designed to extract structured patient data from free-text clinical summaries and updates. You must extract relevant information and validate it against condition-specific monitoring schemas.
-
-Use the following **master schema** derived from 2025 clinical guidelines (AHA, ADA, GINA, GOLD, etc.). For each use case, there are:
-- Core vital/biometric requirements (with LOINC references)
-- Mandatory patient-history elements
-- Recommended alert/trigger thresholds
-- Primary guideline source citations
-
-Do NOT fabricate data. If required fields are missing, respond as a friendly chat assistant and ASK THE USER (e.g., nurse) to provide the missing information.
-
----
-
-# 🧾 MASTER PROFILE REQUIREMENTS
-
-1. **Chronic Disease Management (HF, DM, Asthma, COPD)**
-   - Core Vital/Biometric Inputs (sensor ➜ LOINC): 
-     • Weight ➜ 29463-7 
-     • HR/SBP/DBP ➜ 8867-4 / 8480-6 / 8462-4 
-     • SpO₂ ➜ 59408-5 
-     • Glucose ➜ 2339-0 
-   - Required History: 
-     • Age, sex 
-     • NYHA class 
-     • A1c & diabetes meds 
-     • Asthma severity / GOLD stage 
-   - Alert Thresholds: 
-     • SpO₂ < 88% (GOLD 2023) 
-     • Weight ↑ >2kg/3d (AHA 2022) 
-     • A1c > 9% (ADA 2025)
-   - Evidence: [1][2][3][4]
-
-2. **Post-Operative Recovery**
-   - Core Vitals:
-     • HR ➜ 8867-4 
-     • BP ➜ 8480-6 
-     • Temp ➜ 8310-5 
-   - Required History:
-     • Procedure type 
-     • VTE risk 
-     • Opioid regimen 
-   - Alert:
-     • Temp >38.5°C 
-     • SBP <90 mmHg 
-   - Evidence: [5]
-
-3. **Oncology Monitoring**
-   - Inputs:
-     • Temp ➜ 8310-5 
-     • Weight ➜ 29463-7 
-   - Required:
-     • ANC, cancer stage, ICI use 
-   - Alert:
-     • Temp ≥38°C + ANC <500 
-   - Evidence: [6]
-
-4. **Maternal-Fetal Monitoring**
-   - Inputs:
-     • BP ➜ 8480-6 
-     • FHR ➜ 56085-1 
-   - Required:
-     • Gestational age, pre-eclampsia risk 
-   - Alert:
-     • BP ≥140/90, FHR <110/>160 
-   - Evidence: [8]
-
-5. **Substance Use**
-   - Inputs:
-     • Transdermal EtOH, HR ➜ 8867-4 
-   - Required:
-     • AUDIT score, naltrexone use 
-   - Alert:
-     • TAC ≥0.02% 
-   - Evidence: [21]
-
-# 📚 Sources
-1. AHA 2022 HF - doi:10.1161/CIR.0000000000001063
-2. ADA 2025 - https://diabetesjournals.org/care/article/48/Supplement_1/S6
-3. GINA 2024 - https://ginasthma.org
-4. GOLD 2023 - https://goldcopd.org
-5. ERAS 2025 - https://erassociety.org
-6. ASCO 2024 - https://connectwithcare.org
-8. ACOG/AHRQ Maternal RPM 2025
-21. SOBRsafe EtOH Validation - https://ir.sobrsafe.com
-
----
-
-## TASK
-
-Analyze the following input (which may contain both the original summary and follow-up updates).
-If there is any follow up updates, you should act like a chatbot considering the response you gave earlier and new responses from the careteam and respond accordingly:
-
-\"""{input_text}\"""
-
-1. Extract valid clinical information and incorporate new updates into the existing structure.
-2. Preserve previously valid data if still applicable.
-3. Re-evaluate *missing_fields* based on the full current information.
-4. Return the updated JSON structured profile.
-
-Output a single raw JSON object with:
-- demographics
-- vitals_biometrics (with LOINC)
-- functional_scores
-- medications
-- devices
-- behavioral_factors
-- infectious_history
-- missing_fields (list of dictionaries with parameter, question, guideline_ref)
-- alerts (trigger violations)
-
-Use null for unknown values. Do not fabricate. Only ask about *required* missing values.
-"""
-
     try:
-        response = requests.post(
-            "https://api.perplexity.ai/chat/completions",
-            headers={
-                "Authorization": f"Bearer {SONAR_API_KEY}",
-                "Content-Type": "application/json"
-            },
-            json={
-                "model": "sonar-reasoning",
-                "messages": [{"role": "user", "content": prompt}]
-            }
-        )
-
-        raw_output = response.json()['choices'][0]['message']['content']
-        print("🧠 Raw AI Output:", raw_output)
-
-        cleaned = re.sub(r"<think>.*?</think>", "", raw_output, flags=re.DOTALL).strip()
-        cleaned = re.sub(r"^```json|```$", "", cleaned).strip()
-        json_match = re.search(r'\{[\s\S]*\}', cleaned)
-        if not json_match:
-            raise ValueError("No valid JSON object found in cleaned output.")
-
-        json_str = json_match.group()
-
-        # strip out JavaScript‐style comments
-        json_str = re.sub(r'//.*', '', json_str)
-        json_str = re.sub(r'/\*[\s\S]*?\*/', '', json_str)
-
-        parsed_json = json.loads(json_str)
+        parsed_json = parse_profile_text(input_text, username)
         return jsonify({'parsed': parsed_json}), 200
-
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return jsonify({'error': str(e), 'raw_output': raw_output if 'raw_output' in locals() else 'N/A'}), 500
+        return jsonify({'error': str(e)}), 500
 
 
 
@@ -693,57 +700,39 @@ from flask import url_for
 @app.route('/reprocess-profile', methods=['POST', 'OPTIONS'])
 @cross_origin()
 def reprocess_profile_with_updates():
-    data = request.get_json(force=True)
+    process = psutil.Process(os.getpid())
+    mem_before = process.memory_info().rss / 1024 ** 2  # in MB
+    cpu_before = process.cpu_percent(interval=None)
+    data = request.get_json()
     username = data.get('username')
     updates = data.get('updates', {})
 
-    print("🚨 reprocess-profile called")
-    print("    payload:", data)
-
+    # Fetch existing profile from DB
     user = User.query.filter_by(username=username).first()
     profile = PatientProfile.query.filter_by(user_id=user.id).first()
-    if not profile:
-        return jsonify({'error': 'Profile not found'}), 404
 
     updated_input = (
-        f"{profile.original_input}\n\nUpdates:\n" +
-        "\n".join(f"{k}: {v}" for k,v in updates.items())
+            f"{profile.original_input}\n\nUpdates:\n" +
+            "\n".join(f"{k}: {v}" for k, v in updates.items())
     )
 
-    # build absolute URL to your own parse-profile route
-    parse_url = request.url_root.rstrip('/') + url_for('parse_profile')
-    print("    calling parse-profile at:", parse_url)
-    print("    with input:", updated_input)
+    try:
+        parsed_json = parse_profile_text(updated_input, username)
+        profile.data = parsed_json
+        db.session.commit()
+        mem_after = process.memory_info().rss / 1024 ** 2
+        cpu_after = process.cpu_percent(interval=0.5)
 
-    # hit parse-profile
-    resp = requests.post(parse_url,
-                         json={'input': updated_input, 'username': username})
-    print("    parse-profile responded:", resp.status_code, resp.text)
+        print(f"Memory used: {mem_after - mem_before:.2f} MB")
+        print(f"CPU used: {cpu_after:.2f}%")
+        return jsonify({'parsed': parsed_json}), 200
+    except Exception as e:
+        mem_after = process.memory_info().rss / 1024 ** 2
+        cpu_after = process.cpu_percent(interval=0.5)
 
-    if resp.status_code != 200:
-        return jsonify({
-            'error':           'Reprocessing failed',
-            'parse_status':    resp.status_code,
-            'parse_response':  resp.text
-        }), 500
-
-    new_profile = resp.json().get('parsed')
-    if not new_profile:
-        return jsonify({
-            'error':          'Reprocessing succeeded but no `parsed` key in response',
-            'raw_response':   resp.text
-        }), 500
-
-    profile.data = new_profile
-    profile.original_input = updated_input
-    db.session.commit()
-
-    return jsonify({
-        'profile':        new_profile,
-        'missing_fields': new_profile.get('missing_fields', [])
-    }), 200
-
-
+        print(f"Memory used: {mem_after - mem_before:.2f} MB")
+        print(f"CPU used: {cpu_after:.2f}%")
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/patient-chat', methods=['POST'])

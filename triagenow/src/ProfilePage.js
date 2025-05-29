@@ -12,7 +12,7 @@ export default function ProfilePage() {
 
   useEffect(() => {
     if (!user) return;
-    fetch(`${BACKEND_URL}/${user.username}`)
+    fetch(`${BACKEND_URL}/profile/${user.username}`)
       .then(res => res.json())
       .then(data => {
         if (data.profile) {
