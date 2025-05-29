@@ -24,3 +24,4 @@ gunicorn
 json5==0.9.14
 psycopg2-binary>=2.9.0
 psutil
+gevent
