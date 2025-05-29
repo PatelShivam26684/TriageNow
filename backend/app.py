@@ -469,14 +469,6 @@ def get_patients():
         for p in patients
     ])
 
-# backend/utils/profile_parser.py
-
-import requests
-import re
-import json
-import os
-
-SONAR_API_KEY = os.getenv("SONAR_API_KEY")
 
 def parse_profile_text(input_text: str, username: str = None):
     if not input_text:
