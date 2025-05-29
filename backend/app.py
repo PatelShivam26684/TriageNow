@@ -1,23 +1,20 @@
 from gevent import monkey
 monkey.patch_all()
-from flask import Flask, request, jsonify
-from flask_cors import CORS
+
+from flask import Flask, request, jsonify, abort, url_for
+from flask_cors import CORS, cross_origin
+from dotenv import load_dotenv
 import requests
 import os
-from dotenv import load_dotenv
-import re,traceback
-from markdown import markdown
-load_dotenv()
-from models import db, bcrypt, User
-from flask import abort
-import json5 as json
-from flask_cors import cross_origin
-from flask import url_for
-from models import Vitals, CareChatMessage, PatientProfile, PatientChatMessage
-from models import PatientProfile, User
+import re
+import traceback
 import psutil
+import json5 as json
+from markdown import markdown
 
+from models import db, bcrypt, User, Vitals, CareChatMessage, PatientProfile, PatientChatMessage
 
+load_dotenv()
 
 
 
@@ -35,7 +32,11 @@ def clean_response(raw_text):
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    'connect_args': {'sslmode': 'require'}
+}
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
 print("Connected to DB:", app.config['SQLALCHEMY_DATABASE_URI'])
 
 db.init_app(app)
