@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
+import {BACKEND_URL} from "./config";
 
-function App() {
+function TriageForm() {
   const [symptoms, setSymptoms] = useState('');
   const [medications, setMedications] = useState({
     Tylenol: false,
@@ -22,7 +23,7 @@ function App() {
   setResult(null);
 
   try {
-    const response = await fetch('http://127.0.0.1:5000/triage', {
+    const response = await fetch(`${BACKEND_URL}/triage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ symptoms, medications: selectedMeds }),
@@ -112,4 +113,4 @@ function App() {
   );
 }
 
-export default App;
+export default TriageForm;

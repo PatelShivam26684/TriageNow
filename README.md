@@ -66,7 +66,7 @@ Frontend Setup (`/triagenow`)
 1. In a separate terminal tab, cd into TriageNow and run:
 ```bash
 cd TriageNow
-cd triagenow
+cd TriageNow
 npm install
 npm start
 ```
